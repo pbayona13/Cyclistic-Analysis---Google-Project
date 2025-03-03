@@ -1,0 +1,268 @@
+---
+title: "Case study: How does a bike-share navigate speedy success?"
+author: "Paula Andrea Bayona Cortez"
+output: html_notebook
+---
+
+```{r, echo=FALSE, results='asis'}
+cat('<div style="text-align:center;">')
+knitr::include_graphics("Cyclistics.png")
+cat('</div>')
+```
+
+---
+# Business Task
+
+Cyclistic, a bike-share program with over 5,800 bicycles and 600 docking stations, aims to increase the number of annual members. Currently, it classifies customers as casual riders (single-ride/full-day pass users) and Cyclistic members (annual subscribers).
+The marketing director, Lily Moreno, believes that focusing on converting casual riders into annual members is key to the company’s growth. To achieve this, stakeholders need data-driven insights into:
+
+* The behavioral differences between casual riders and members.
+* The factors that influence casual riders to become members.
+* The impact of digital media on membership conversion strategies.
+
+These insights will guide marketing decisions aimed at increasing membership subscriptions.
+
+# Description of all data sources used
+
+In this project, the Divvy 2019 Q1 and Divvy 2020 Q1 datasets provided by Motivate International Inc. were used. Both datasets contain information about bike usage, including dates, station details, and user information from the first quarter of each year.
+
+# Documentation of any cleaning or manipulation of data 
+Installing packages 
+```{r}
+install.packages("tidyverse")
+install.packages("skimr")
+install.packages("janitor")
+install.packages("ggplot2")
+install.packages("circlize")
+```
+
+Uploading libraries
+```{r}
+library(tidyverse)
+library(skimr)
+library(janitor)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(circlize)
+library(scales)
+```
+Uploading the databases
+```{r}
+data_2019 <- read.csv("Divvy_Trips_2019_Q1.csv")
+data_2020 <- read.csv("Divvy_Trips_2020_Q1.csv")
+```
+Verifying column names
+```{r}
+colnames(data_2019)
+colnames(data_2020)
+```
+Variables have different names so let's gonna change them
+```{r}
+data_2020_clean <- data_2020 %>% rename(
+  trip_id=ride_id,
+  start_time = started_at,
+  end_time = ended_at,
+  from_station_id = start_station_id,
+  to_station_id = end_station_id,
+  usertype = member_casual
+)
+```
+We notice that column tripduration does not exist in data_2020 so let's create it
+```{r}
+data_2020_clean <- data_2020_clean %>%
+  mutate(
+    start_time = as.POSIXct(start_time, format = "%Y-%m-%d %H:%M:%S"),
+    end_time = as.POSIXct(end_time, format = "%Y-%m-%d %H:%M:%S"),
+    tripduration = as.numeric(difftime(end_time, start_time, units = "secs"))
+  )
+```
+Creating new dataframes with the variables needed for the analysis
+```{r}
+data_2019_clean <- data_2019 %>% 
+  select(trip_id,start_time,end_time,tripduration,from_station_id,to_station_id,usertype)
+
+data_2020_clean <- data_2020_clean %>% 
+  select(trip_id,start_time,end_time,tripduration,from_station_id,to_station_id,usertype)
+```
+Combining data for cleaning and analysis
+```{r}
+combined_data <- rbind(data_2019_clean, data_2020_clean)
+```
+Verifying null values
+```{r}
+sum(is.na(combined_data))
+```
+There is 1 null value so let's delete it
+```{r}
+combined_data <- na.omit(combined_data)
+```
+Verifying duplicates
+```{r}
+sum(duplicated(combined_data))
+```
+Verifying types of formats
+```{r}
+str(combined_data$start_time)
+
+str(combined_data$end_time)
+```
+Converting into date format
+```{r}
+combined_data <- combined_data %>% 
+  mutate(start_time = as.POSIXct(start_time, format = "%Y-%m-%d %H:%M:%S"))
+
+combined_data <- combined_data %>% 
+  mutate(end_time = as.POSIXct(end_time, format = "%Y-%m-%d %H:%M:%S"))
+```
+Verifying negative values in tripduration
+```{r}
+sum(combined_data$tripduration < 0)
+```
+Turning times inside out to eliminate negative values
+```{r}
+combined_data <- combined_data %>%
+  mutate(
+    corrected_start_time = ifelse(start_time > end_time, end_time, start_time),
+    corrected_end_time = ifelse(start_time > end_time, start_time, end_time),
+    tripduration = as.numeric(difftime(corrected_end_time, corrected_start_time, units = "secs"))
+  )
+```
+Deleting the corrected_start_time and corrected_end_time column
+```{r}
+combined_data <- combined_data %>% 
+  select(-corrected_end_time, -corrected_start_time)
+```
+Verifying format type of tripduration
+```{r}
+str(combined_data$tripduration)
+```
+Eliminating comas in the values to be able to change them as numeric values
+```{r}
+combined_data <- combined_data %>%
+  mutate(tripduration = as.numeric(gsub(",", "", tripduration)))
+```
+Converting in numeric values
+```{r}
+combined_data$tripduration <- as.numeric(combined_data$tripduration)
+```
+Verifying if there are null values
+```{r}
+sum(is.na(combined_data$tripduration))
+```
+Checking statistics
+```{r}
+summary(combined_data$tripduration)
+```
+Checking for trips longer than 7 days
+```{r}
+combined_data %>% filter(tripduration > 60*60*24*7)
+```
+Filtering data for max lenght trip 24hr
+```{r}
+combined_data <- combined_data %>% filter(tripduration < 86400)
+```
+Verifying for na values
+```{r}
+sum(is.na(combined_data$from_station_id))
+sum(is.na(combined_data$to_station_id))
+```
+Verifying format type
+```{r}
+str(combined_data$from_station_id)
+str(combined_data$to_station_id)
+```
+Veryging inconsistencies in values
+```{r}
+length(unique(combined_data$from_station_id))
+length(unique(combined_data$to_station_id))
+```
+Renaming usertype data
+```{r}
+data_2019_clean <- data_2019_clean %>%
+  mutate(usertype = case_when(
+    usertype == "Subscriber" ~ "member",
+    usertype == "Customer" ~ "casual",
+    TRUE ~ usertype  # Mantiene los valores que no cambian
+  ))
+```
+Creating variable weekday
+```{r}
+combined_data$weekday <- factor(combined_data$weekday, 
+                                levels = c("Monday", "Tuesday", "Wednesday", "Thursday", 
+                                           "Friday", "Saturday", "Sunday"))
+```
+## Analyzing data
+
+```{r}
+prop <- round(prop.table(table(combined_data$usertype))*100)
+paste0(prop,"%")
+
+user_counts <- data.frame(usertype= names(prop), count = as.numeric(prop))
+
+ggplot(user_counts, aes(x = "", y = count, fill = usertype)) +
+  geom_bar(stat = "identity", color = "white") +
+  coord_polar(theta = "y") +
+  theme_void() + 
+  labs(title = "Usertype Distribution") +
+  geom_text(aes(label = paste0(count, "%")), position = position_stack(vjust = 0.5))
+```
+Annual members represents the majority of the total users.
+```{r}
+combined_data %>%
+  group_by(usertype) %>%
+  summarise(avg_tripduration = mean(tripduration, na.rm = TRUE))
+
+table(combined_data)
+avg_tripduration <- aggregate(tripduration ~ usertype, data = combined_data, FUN = mean)
+
+ggplot(avg_tripduration, aes(x = usertype, y = tripduration, fill = usertype)) +
+  geom_bar(stat = "identity") +
+  labs(title = "Average Trip Duration by User Type",
+       x = "User Type",
+       y = "Average Trip Duration (seconds)",
+       fill = "User Type") +
+  theme_minimal()
+```
+Casual riders trips are in average three times longer than annual member trips.
+```{r, echo=FALSE}
+ggplot(combined_data, aes(x = weekday, fill = usertype)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Bike Usage per Weekday by Usertype", x = "Day", y = "Number of trips") +
+  theme_minimal() +
+  scale_y_continuous(labels = comma)
+```
+Annual members use the service more eon weekdays, while casual riders use it more on weekends, especially on Sundays.
+```{r, echo=FALSE}
+combined_data %>%
+  count(from_station_id, usertype, name = "trips") %>%
+  group_by(usertype) %>%
+  slice_max(trips, n = 5) %>%
+  ggplot(aes(x = reorder(from_station_id, trips), y = trips, fill = usertype)) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(title = "Top 5 Stations by Usertype", x = "Stations", y = "Trips") +
+  theme_minimal() +
+  scale_fill_manual(values = c("casual" = "#E63946", "member" = "#457B9D"))
+
+```
+There are different top stations for each type of user.
+
+# Answering questions
+
+1. How do annual members and casual riders use Cyclistic bikes differently?
+Annual members tend to take shorter trips and use the service more frequently on weekdays. Casual riders, on the other hand, take longer trips, with their usage increasing on weekends, especially on Sundays. Both types of users tend to start their rides from different stations. It could be inferred that annual members primarily use the service for commuting to work, while casual riders use it for leisure activities. However, a deeper analysis of the geographic locations of the stations would be necessary to confirm this assumption.
+
+2. Why would casual riders buy Cyclistic annual memberships?
+Casual riders might be encouraged to purchase an annual membership due to benefits such as discounts, participation in Cyclistic-sponsored activities or contests, and incentives for reaching time or distance milestones.
+
+3. How can Cyclistic use digital media to influence casual riders to become members?
+By creating digital content that highlights the benefits of membership through social media.
+
+4. Strategies for the Digital Campaign to emphasize the benefits of the membership, the campaign could include:
+
+* Price benefits and promotions: Offering discounts on annual memberships, such as a first-time subscription discount or a free 7-day trial period.
+* Health and environmental benefits: Running digital campaigns that showcase how cycling can improve long-term health and how using bikes for daily tasks positively impacts the environment.
+* Events and competitions: Organizing races, challenges, or group activities that encourage users to sign up for a membership.
+* Targeted advertising in strategic locations: Since casual riders tend to use different stations than annual members, advertising campaigns should be tailored to each station’s location—whether in tourist areas or more routine urban settings.
+
